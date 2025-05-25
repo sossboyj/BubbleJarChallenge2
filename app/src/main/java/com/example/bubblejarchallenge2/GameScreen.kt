@@ -5,7 +5,6 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -14,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,93 +23,126 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.CircleShape
 
-
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BubbleGameScreen() {
-    // Stateful jars
+    // — Game state —
     val jars = remember {
         mutableStateListOf<Jar>().apply {
             generateGame().forEach { add(it) }
         }
     }
-    var selectedJarIndex by remember { mutableStateOf<Int?>(null) }
-    var moves by remember { mutableStateOf(0) }
-    var gameWon by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<Int?>(null) }
+    var moves by remember { mutableIntStateOf(0) }
+    var won by remember { mutableStateOf(false) }
 
-    // Orientation detection
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isLandscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Unified click handler:
+    fun onJarClick(idx: Int) {
+        val sel = selected
+        if (sel == null) {
+            // only select if non-empty
+            if (jars[idx].isNotEmpty()) selected = idx
+        } else {
+            // try move if different
+            if (sel != idx) {
+                if (moveBubble(jars[sel], jars[idx])) {
+                    moves++
+                    if (checkWin(jars)) won = true
+                }
+            }
+            selected = null
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Bubble Jar Challenge") },
                 actions = {
-                    TextButton(onClick = {
-                        // Reset game
-                        jars.clear()
-                        generateGame().forEach { jars.add(it) }
-                        selectedJarIndex = null
-                        moves = 0
-                        gameWon = false
-                    }) {
+                    TextButton(
+                        onClick = {
+                            // Reset everything
+                            jars.clear()
+                            generateGame().forEach { jars.add(it) }
+                            selected = null
+                            moves = 0
+                            won = false
+                        }
+                    ) {
                         Text("New Game")
                     }
                 }
             )
         }
-    ) { innerPadding ->
+    ) { padding ->
         Box(
             Modifier
-                .padding(innerPadding)
+                .padding(padding)
                 .fillMaxSize()
         ) {
             if (isLandscape) {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    JarsPane(jars, selectedJarIndex, onJarClick = { idx ->
-                        handleMove(
-                            idx, jars, selectedJarIndex,
-                            onMove = { moves++ },
-                            onWin = { gameWon = true }
-                        ).also { selectedJarIndex = null }
-                    })
-                    ControlPane(moves, gameWon) {
+                Row(Modifier.fillMaxSize()) {
+                    // Left side: instructions + jars
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Spacer(Modifier.height(8.dp))
+                        MovesDisplay(moves)
+                        Instructions()
+                        JarsPane(jars, selected, ::onJarClick)
+                    }
+                    // Right side: controls
+                    ControlPane(moves, won) {
                         jars.clear()
                         generateGame().forEach { jars.add(it) }
-                        selectedJarIndex = null
+                        selected = null
                         moves = 0
-                        gameWon = false
+                        won = false
                     }
                 }
             } else {
+                // Portrait layout
                 Column(
-                    modifier = Modifier
+                    Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(Modifier.height(12.dp))
                     MovesDisplay(moves)
-                    JarsPane(jars, selectedJarIndex, onJarClick = { idx ->
-                        handleMove(
-                            idx, jars, selectedJarIndex,
-                            onMove = { moves++ },
-                            onWin = { gameWon = true }
-                        ).also { selectedJarIndex = null }
-                    })
-                    ControlPane(moves, gameWon) {
+                    Instructions()
+                    JarsPane(jars, selected, ::onJarClick)
+                    ControlPane(moves, won) {
                         jars.clear()
                         generateGame().forEach { jars.add(it) }
-                        selectedJarIndex = null
+                        selected = null
                         moves = 0
-                        gameWon = false
+                        won = false
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun Instructions() {
+    Text(
+        text = "Tap a jar to pick its top bubble.\n" +
+                "Tap another jar to move it if valid.\n" +
+                "Max 4 per jar.",
+        style = MaterialTheme.typography.bodyMedium,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .padding(8.dp)
+            .fillMaxWidth()
+    )
 }
 
 @Composable
@@ -121,41 +154,23 @@ private fun MovesDisplay(moves: Int) {
     )
 }
 
-private fun handleMove(
-    index: Int,
-    jars: MutableList<Jar>,
-    selectedIndex: Int?,
-    onMove: () -> Unit,
-    onWin: () -> Unit
-) {
-    if (selectedIndex == null) return
-    if (selectedIndex != index) {
-        val moved = moveBubble(jars[selectedIndex], jars[index])
-        if (moved) {
-            onMove()
-            if (checkWin(jars)) onWin()
-        }
-    }
-}
-
 @Composable
 private fun JarsPane(
     jars: List<Jar>,
-    selectedIndex: Int?,
+    selected: Int?,
     onJarClick: (Int) -> Unit
 ) {
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 12.dp)
-            .horizontalScroll(rememberScrollState()),
+            .padding(vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         itemsIndexed(jars, key = { idx, _ -> idx }) { idx, jar ->
             key(idx) {
                 JarView(
                     jar = jar,
-                    isSelected = (selectedIndex == idx),
+                    isSelected = (selected == idx),
                     onClick = { onJarClick(idx) }
                 )
             }
@@ -166,19 +181,20 @@ private fun JarsPane(
 @Composable
 private fun ControlPane(
     moves: Int,
-    gameWon: Boolean,
+    won: Boolean,
     onReset: () -> Unit
 ) {
     Column(
-        modifier = Modifier
+        Modifier
             .padding(16.dp)
             .fillMaxHeight(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (gameWon) {
+        MovesDisplay(moves)
+        if (won) {
             Text(
-                "🎉 You Won!",
+                text = "🎉 You Won!",
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -209,15 +225,11 @@ fun JarView(
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Empty slots
+        // empty slots
         repeat(4 - jar.size) {
-            Spacer(
-                Modifier
-                    .size(40.dp)
-                    .padding(2.dp)
-            )
+            Spacer(Modifier.size(40.dp).padding(2.dp))
         }
-        // Bubbles
+        // bubbles
         jar.forEach { bubble ->
             Box(
                 Modifier
